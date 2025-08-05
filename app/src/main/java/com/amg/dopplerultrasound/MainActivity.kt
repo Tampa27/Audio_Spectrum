@@ -9,10 +9,19 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ComposeShader
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Shader
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -40,9 +49,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import com.amg.dopplerultrasound.data.Paciente
-import com.amg.dopplerultrasound.data.PacienteDao
-import com.weiner.recordaudio.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -61,13 +67,19 @@ import kotlin.math.sqrt
 import kotlin.properties.Delegates
 import androidx.core.graphics.createBitmap
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.CoroutineScope
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.collections.copyOf
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.min
+import kotlin.math.pow
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        var MAX_ARRAY_SIZE = 120//200
+        var MAX_ARRAY_SIZE = 110//200
     }
 
 
@@ -76,7 +88,7 @@ class MainActivity : AppCompatActivity() {
     private var frequenciesCount by Delegates.notNull<Int>()
     private var ip = 0.00
     private var qm = 0.00
-    private var maxDb = 60
+    private var maxDb = -20
     private var gain = 1.0
     private val maxFactor = 3.0
     private var Fs = 11025
@@ -89,14 +101,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageView: ImageView
     private lateinit var seekdB:SeekBar
     private lateinit var checkEnvol:CheckBox
-    private lateinit var ipText: TextView
     private lateinit var dBText: TextView
-    private lateinit var linearLayout: LinearLayout
-    private lateinit var patientText: TextView
-    private lateinit var gainSeek: SeekBar
-    private lateinit var gainText: TextView
-    private lateinit var diameterEdit: TextInputEditText
-    private lateinit var qmText: TextView
 
     private lateinit var unit:String
     private var windowSize = 256//512
@@ -104,8 +109,6 @@ class MainActivity : AppCompatActivity() {
     private val textWidth = 60
     private val c = 154000.0
     private val K = 0.9071
-    private var diametro = 0.0
-    private val A_comp = 32.0 // Compensacion de las altas frecuencias
     private var isRunning:Boolean = false
     private var isLoaded:Boolean = false
     val overlap = 0.5 // 50%
@@ -116,15 +119,11 @@ class MainActivity : AppCompatActivity() {
 
     private var yAnt = 0.0f
 
-    private var patientSelected = 0
-    private lateinit var patient:Paciente
-    lateinit var database: AppDatabase
-    lateinit var pacienteDao: PacienteDao
-    private lateinit var pacientes: List<Paciente>
 
 
     private lateinit var sharedPreferences: SharedPreferences
 
+    val shapeType = "rect"  // "rect", "triangle", "wave"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -144,27 +143,18 @@ class MainActivity : AppCompatActivity() {
                     or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
         }
 
-        linearLayout = findViewById(R.id.loading_layout)
-        database = AppDatabase.getDatabase(applicationContext) // O el contexto apropiado
-        pacienteDao = database.pacienteDao()
-        cargarPacientes()
 
         imageView = findViewById(R.id.imageView)
-        ipText = findViewById(R.id.ipText)
         dBText = findViewById(R.id.dbText)
         seekdB = findViewById(R.id.umbralSeek)
-        gainSeek = findViewById(R.id.gainSeek)
-        gainText = findViewById(R.id.gainText)
+
         checkEnvol = findViewById(R.id.checkEnvol)
-        patientText = findViewById(R.id.pacienteText)
-        diameterEdit = findViewById(R.id.diametro)
-        qmText = findViewById(R.id.qmText)
 
 
         seekdB.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener{
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                maxDb = progress
-                dBText.text = "Umbral: $maxDb dB"
+                maxDb = -progress
+                dBText.text = "${getString(R.string.umbral)} $maxDb dB"
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -172,18 +162,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
 
         })
-        gainSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener{
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                gain = progress / 10.0
-                gainText.text = "Ganancia: ${String.format("%.1f", gain)}"
-            }
 
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
-            }
-
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-            }
-        })
         imageView.setOnClickListener {
             if (!isRunning) {
                 isRunning = true
@@ -206,21 +185,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
-        diameterEdit.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-            }
-
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                try {
-                    diametro = s.toString().toDouble()
-                }
-                catch (e:Exception){diametro = 5.0}
-            }
-
-            override fun afterTextChanged(s: Editable?) {
-            }
-
-        })
         loadPreferences()
 
         Toast.makeText(
@@ -239,36 +203,16 @@ class MainActivity : AppCompatActivity() {
     private fun loadPreferences() {
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
         ipSize = (1f/(windowSize.toFloat()/Fs)).toInt()
-        unit = sharedPreferences.getString("units","cm/s")!!
+        unit = sharedPreferences.getString("units","kHz")!!
         Fs = sharedPreferences.getString("fs","11025")!!.toInt()
         windowSize = sharedPreferences.getString("window","512")!!.toInt()
         //val samplesBetweenWindows = (windowSize * overlap).toInt()
         val time = sharedPreferences.getString("time","4")!!.toInt()+1
         val ms = (windowSize.toFloat()/Fs)
-        grayScale = sharedPreferences.getBoolean("gray",true)
+        grayScale = sharedPreferences.getBoolean("gray",false)
         //MAX_ARRAY_SIZE = ((time.toFloat()/ms)).toInt()
-        try {
-            diametro = diameterEdit.text.toString().toDouble()
-        }
-        catch (e:Exception){diametro = 5.0}
         samplesBetweenWindows = (windowSize * overlap).toInt()
-        patientSelected = sharedPreferences.getInt("patient",0)
     //cargarPacientes()
-    }
-
-    private fun cargarPacientes(){
-        lifecycleScope.launch {
-            linearLayout.visibility = View.VISIBLE
-            try {
-                pacientes = pacienteDao.getTodosLosPacientes().first()
-                patient = pacientes[patientSelected]
-                patientText.text = "Paciente: ${patient.nombre}"
-            }
-            catch (e:Exception){}
-            finally {
-                linearLayout.visibility = View.GONE
-            }
-        }
     }
 
     override fun onResume() {
@@ -279,10 +223,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        /*if (hasFocus) {
-            bmp = createBitmap(imageView.width, imageView.height)
-            bmp.eraseColor(Color.BLACK)
-        }*/
+
     }
 
     @SuppressLint("MissingPermission")
@@ -309,16 +250,6 @@ class MainActivity : AppCompatActivity() {
             RECORDER_SAMPLERATE, RECORDER_CHANNELS,
             RECORDER_AUDIO_ENCODING, frequenciesCount
         )
-
-        /*val audioTrack = AudioTrack(
-            AudioManager.STREAM_MUSIC,
-            RECORDER_SAMPLERATE,
-            AudioFormat.CHANNEL_OUT_MONO,
-            RECORDER_AUDIO_ENCODING,
-            frequenciesCount,
-            AudioTrack.MODE_STREAM
-        )*/
-
         val fft = FFT(frequenciesCount)
         lifecycleScope.launch (Dispatchers.Default){
         //thread {
@@ -334,19 +265,25 @@ class MainActivity : AppCompatActivity() {
                 currentPosition += samplesBetweenWindows
 
                 for (fr in 0 until frequenciesCount) {
-                    x[fr] = buffer[fr] * 1.0
+                    x[fr] = buffer[fr] / 16384.0
                     y[fr] = 0.0
                 }
 
-                //val xWindowed = x.copyOf()
-                //fft.hanningWindow(xWindowed)
+                val xWindowed = x.copyOf()
+                fft.hanningWindow(xWindowed)
                 //currentPosition += samplesBetweenWindows
-                fft.process(x, y)
-                //val threshold = calculateNoiseThreshold(y)
-                //y = applyThreshold(y, threshold)
+                fft.process(xWindowed, y)
+                val limit = Math.pow(10.0,maxDb*maxFactor/20)
                 for (fr in 0 until frequenciesCount) {
                     val mag_abs = Math.abs(y[fr])
                     data[currentIndex][fr] = mag_abs
+                    val magdB = 10 * log(data[currentIndex][fr], 10.0)
+                    if (magdB < maxDb)
+                        data[currentIndex][fr] = 0.0
+                    else{
+                        val v = data[currentIndex][fr]//if (data[currentIndex][fr] < limit) limit else data[currentIndex][fr]
+                        data[currentIndex][fr]  = v
+                    }
                 }
                 //rectaCompens(data[currentIndex])
                 val fmed = fMeans(data[currentIndex])
@@ -358,18 +295,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 else{
                     if (currentIndex % ipSize == 0){
-                        val fmm = fmList.sum()/fmList.size
                         //val fmax = fmList.max()
                         val fmax = fmaxList.sum()/fmaxList.size
-                        val fmin = fmList.min()
-                        ip = if (fmm > 0.0000001) (fmax - fmin) / fmm else 0.0
                         fmList.removeAt(0)
                         fmList.add(fmed.toDouble())
                         fmaxList.removeAt(0)
                         fmaxList.add(fmax.toDouble())
-                        val fkH = fmm*(Fs/windowSize)
-                        val vel = getVelocidad(fkH)
-                        qm = PI*(diametro/20)*(diametro/20)*vel*60
                     }
                 }
 
@@ -387,9 +318,17 @@ class MainActivity : AppCompatActivity() {
     private fun render() {
         if (this::bmp.isInitialized && bmp.width > 0 && bmp.height > 0) {
             val c = Canvas(bmp)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-            val rectWidth = 1.0f * (bmp.width) / MAX_ARRAY_SIZE
+            val paint =Paint().apply {
+                isAntiAlias = true
+                isDither = true  // Mejora la gradación de colores
+                style = Paint.Style.FILL
+                strokeJoin = Paint.Join.ROUND
+                strokeCap = Paint.Cap.ROUND
+            }
+            val rectWidth = 1.0f * (bmp.width) / (MAX_ARRAY_SIZE)
             val rectHeight = 1.0f * bmp.height / (frequenciesCount / 2.0f)
+
+
             val halfOfFrequencies = frequenciesCount / 2
             paint.color = Color.WHITE
             paint.textSize = 30f
@@ -413,30 +352,34 @@ class MainActivity : AppCompatActivity() {
                 val xt = (bmp.width - textHeight) * (1f - (i.toFloat() / max_time))
                 c.drawText(" " + i + "s", xt, bmp.height.toFloat(), paint)
             }
+            val gradientSize = 10
             repeat(MAX_ARRAY_SIZE) { x ->
                 val index =
                     if (currentIndex + x + 1 < MAX_ARRAY_SIZE) currentIndex + x + 1 else currentIndex + x + 1 - MAX_ARRAY_SIZE
                 val min = data[index].min()
                 val max = data[index].max()
                 val limit = Math.pow(10.0,maxDb*maxFactor/20)
-                /*val maxPox = data[index].withIndex()
-                .filter { it.index < halfOfFrequencies } // Filtrar elementos hasta la mitad
-                .maxByOrNull { it.value }*/
+
+
                 for (y in 0 until halfOfFrequencies) {
-                    val magdB = 20 * log(data[index][y], 10.0)
+                    paint.color = if (grayScale)
+                        getGrayByValueSimple(data[index][y], min, max)
+                    else
+                        getColorByValue2(data[index][y], min, max)
+                    /*val magdB = 20 * log(data[index][y], 10.0)
                     if (magdB < maxDb)
                         paint.color = if (grayScale)
                             getGrayByValueSimple(0.0, min, max)
                                     else
                             getColorByValue2(0.0, min, max)
                     else {
-                        val v = if (data[index][y] > limit) limit else data[index][y]
+                        val v = if (data[index][y] < limit) limit else data[index][y]
                         val value = v*gain
                         paint.color = if (grayScale)
                             getGrayByValueSimple(value, min, max)
                         else
                             getColorByValue2(value, min, max)
-                    }
+                    }*/
                     c.drawRect(
                         x * (rectWidth) + textWidth,
                         (halfOfFrequencies - y) * rectHeight - textHeight,
@@ -444,11 +387,13 @@ class MainActivity : AppCompatActivity() {
                         (halfOfFrequencies - y + 1) * rectHeight - textHeight,
                         paint
                     )
+
+                    // Guardar color actual para la siguiente transición
                 }
 
                 if (checkEnvol.isChecked) {
                     paint.color = Color.YELLOW
-                    paint.strokeWidth = 3f
+                    paint.strokeWidth = 4f
                     val fMedia = fMeans(data[index])
                     val yAct =
                         (halfOfFrequencies - fMedia/*maxPox!!.index*/) * rectHeight - textHeight
@@ -464,12 +409,11 @@ class MainActivity : AppCompatActivity() {
             }
             runOnUiThread {
                 imageView.setImageBitmap(bmp)
-                ipText.text = String.format("%.1f", ip)
-                qmText.text = "Qm:${qm.toInt()}mL/min"
                 imageView.invalidate()
             }
         }
     }
+
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
@@ -543,33 +487,168 @@ class MainActivity : AppCompatActivity() {
         val itemId = item.itemId
         if (itemId == R.id.action_play) {
             isRunning = true
+            recordAudioWithPermissions()
         } else if (itemId == R.id.action_pause) {
             isRunning = false
         }
         else if (itemId == R.id.action_settings) {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
-        else if (itemId == R.id.action_patient) {
-            startActivity(Intent(this, PatientsActivity::class.java))
-        }
+
         else if (itemId == R.id.action_screenshot){
             val bitmap = getBitmapFromUiView(imageView)
             //function call, pass the bitmap to save it
             saveBitmapImage(bitmap)
         }
+        else if (itemId == R.id.action_open){
+            openFilePicker()
+        }
         return super.onOptionsItemSelected(item)
+    }
+
+    private fun openFilePicker() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "audio/wav"  // Solo archivos WAV
+            addCategory(Intent.CATEGORY_OPENABLE)
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/wav", "audio/x-wav"))
+        }
+        filePickerLauncher.launch(intent)
+    }
+
+    private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            result.data?.data?.let { uri ->
+                Thread {
+                    processSelectedAudioFile(uri)
+                }.start()
+            }
+        }
+    }
+
+    private fun processSelectedAudioFile(uri: Uri) {
+        lifecycleScope.launch (Dispatchers.Default) {
+            try {
+                contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val (floatArray, sampleRate) = AudioDecoder.decodeToPCM(applicationContext, uri)
+                        ?: throw Exception("Error decodificando audio")
+                    isRunning = false
+                    processAudioData(floatArray)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                runOnUiThread {
+                    // Mostrar error
+                }
+            }
+        }
+    }
+
+    private fun processAudioData(floatArray: FloatArray) {
+        var currentPosition = 0
+        val RECORDER_SAMPLERATE = Fs//8000
+        val RECORDER_AUDIO_ENCODING: Int = AudioFormat.ENCODING_PCM_16BIT
+        frequenciesCount = windowSize//getMinimalPowerOf2(butterSize)
+        data = Array(MAX_ARRAY_SIZE) {
+            DoubleArray(frequenciesCount) { 0.0 }
+        }
+        var x = DoubleArray(frequenciesCount)
+        var y = DoubleArray(frequenciesCount)
+
+        val fft = FFT(frequenciesCount)
+
+        val audioTrack = AudioTrack(
+            AudioManager.STREAM_MUSIC,
+            RECORDER_SAMPLERATE,
+            AudioFormat.CHANNEL_OUT_MONO,
+            RECORDER_AUDIO_ENCODING,
+            frequenciesCount,
+            AudioTrack.MODE_STREAM
+        )
+        //audioTrack.play()
+        //audioTrack.setVolume(AudioTrack.getMaxVolume())
+        while (currentPosition+frequenciesCount < floatArray.size) {
+            for (fr in 0 until frequenciesCount) {
+                x[fr] = floatArray[fr+currentPosition].toDouble()
+                y[fr] = 0.0
+            }
+            //audioTrack.write(audioBytes, currentPosition, frequenciesCount*2)
+            fft.process(x, y)
+
+            for (fr in 0 until frequenciesCount) {
+                val mag_abs = Math.abs(y[fr])
+                data[currentIndex][fr] = mag_abs
+            }
+            //rectaCompens(data[currentIndex])
+            val fmed = fMeans(data[currentIndex])
+            val bw = bandWidth(data[currentIndex],fmed)
+            val fmax = fmed+bw
+            if (fmList.size < ipSize){
+                fmList.add(fmed.toDouble())
+                fmaxList.add(fmax.toDouble())
+            }
+            else{
+                if (currentIndex % ipSize == 0){
+                    val fmm = fmList.sum()/fmList.size
+                    //val fmax = fmList.max()
+                    val fmax = fmaxList.sum()/fmaxList.size
+                    fmList.removeAt(0)
+                    fmList.add(fmed.toDouble())
+                    fmaxList.removeAt(0)
+                    fmaxList.add(fmax.toDouble())
+                }
+            }
+
+
+            render()
+
+
+            currentPosition += (frequenciesCount*4)
+            currentIndex = if (currentIndex == (MAX_ARRAY_SIZE - 1)) 0 else currentIndex + 1
+        }
+        //audioTrack.stop()
+
+    }
+
+    private fun getAudioFormat(header: ByteArray): Int {
+        // Offset 34-35: bits por muestra
+        return ((header[34].toInt() and 0xFF) or
+                ((header[35].toInt() and 0xFF) shl 8))
+    }
+
+    private fun convertPCM16ToFloat(bytes: ByteArray): FloatArray {
+        val buffer = ByteBuffer.wrap(bytes)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+
+        val shorts = ShortArray(buffer.remaining())
+        buffer.get(shorts)
+
+        return FloatArray(shorts.size) { i ->
+            shorts[i] / 1f
+        }
+    }
+
+    private fun convertPCM8ToFloat(bytes: ByteArray): FloatArray {
+        return FloatArray(bytes.size) { i ->
+            (bytes[i].toInt()) / 1f
+        }
+    }
+
+    private fun convertPCM32ToFloat(bytes: ByteArray): FloatArray {
+        val buffer = ByteBuffer.wrap(bytes)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asIntBuffer()
+
+        val ints = IntArray(buffer.remaining())
+        buffer.get(ints)
+
+        return FloatArray(ints.size) { i ->
+            ints[i] / 1f
+        }
     }
 
     fun getVelocidad(frecuencia:Double):Double{
         return (c/f0)*frecuencia
-    }
-
-    fun rectaCompens(freqMags:DoubleArray){
-        val halfOfFrequencies = frequenciesCount/2
-        for (i in 0 until halfOfFrequencies){
-            if(i > A_comp)
-                freqMags[i] = freqMags[i]*(i/A_comp)
-        }
     }
 
     /**Get Bitmap from any UI View
@@ -597,50 +676,6 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    // En tu clase MainActivity
-
-    private var minValGlobal: Double = 0.0
-    private var maxValGlobal: Double = 100000.0 // Evitar división por cero al inicio si todo es 0
-
-    /**
-     * Calcula el mínimo y máximo valor global del dataset 'data'.
-     * Se debe llamar cuando los datos relevantes han sido actualizados.
-     */
-    private fun updateGlobalMinMax() {
-        if (data.isEmpty() || data[0].isEmpty()) {
-            minValGlobal = 0.0
-            maxValGlobal = 1.0
-            return
-        }
-
-        var currentMin = Double.MAX_VALUE
-        var currentMax = Double.MIN_VALUE
-
-        // Iterar sobre todo el buffer 'data'
-        // Como 'data' es una ventana circular, todas sus entradas son potencialmente válidas.
-        for (i in data.indices) { // Itera sobre cada columna de tiempo
-            for (j in 0 until frequenciesCount / 2) { // Itera sobre las frecuencias relevantes
-                val value = data[i][j]
-                if (value < currentMin) {
-                    currentMin = value
-                }
-                if (value > currentMax) {
-                    currentMax = value
-                }
-            }
-        }
-
-        minValGlobal = if (currentMin == Double.MAX_VALUE) 0.0 else currentMin
-        maxValGlobal = if (currentMax == Double.MIN_VALUE) 1.0 else currentMax
-
-        // Asegurar que maxValGlobal no sea igual a minValGlobal para evitar división por cero en la normalización
-        if (maxValGlobal == minValGlobal) {
-            maxValGlobal = minValGlobal + 1.0 // o alguna otra pequeña delta, o manejarlo en la función de color
-        }
-        // Log para depuración (opcional)
-        // Log.d("GlobalMinMax", "Min: $minValGlobal, Max: $maxValGlobal")
-    }
-
     /**Save Bitmap To Gallery
      * @param bitmap The bitmap to be saved in Storage/Gallery*/
     private fun saveBitmapImage(bitmap: Bitmap) {
@@ -650,6 +685,10 @@ class MainActivity : AppCompatActivity() {
         val values = ContentValues()
         values.put(MediaStore.Images.Media.MIME_TYPE, "image/png")
         values.put(MediaStore.Images.Media.DATE_ADDED, timestamp)
+        var image_name = "$timestamp"
+
+        values.put(MediaStore.Images.Media.DISPLAY_NAME,image_name )
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.put(MediaStore.Images.Media.DATE_TAKEN, timestamp)
             values.put(
@@ -814,126 +853,6 @@ fun getColorByValue1(value: Double, min: Double, max: Double): Int {
     return Color.rgb(red, green, blue)
 }
 
-fun getMinimalPowerOf2(n: Int): Int {
-    return Math.pow(2.0, Math.floor(log2(n.toDouble()))).toInt()
-}
-
-fun calculateNoiseThreshold(buffer: DoubleArray): Double {
-    // Convertir a valores absolutos
-    val magnitudes = buffer.map { Math.abs(it.toDouble()) }
-
-    // Calcular media y desviación estándar
-    val mean = magnitudes.average()
-    val stdDev = sqrt(magnitudes.map { (it - mean) * (it - mean) }.average())
-
-    // Umbral: media + 1.5 * desviación estándar (ajustable)
-    return mean + 1.5 * stdDev
-}
-
-fun calculateNoiseThreshold1(buffer: DoubleArray): Double {
-    val sorted = buffer.map { Math.abs(it.toDouble()) }.sorted()
-    val percentileIndex = (sorted.size * 0.95).toInt()
-    return sorted[percentileIndex]
-}
-
-fun applyThreshold(fftMagnitudes: DoubleArray, threshold: Double): DoubleArray {
-    return fftMagnitudes.map { if (it < threshold) 0.0 else it }.toDoubleArray()
-}
-
-private fun getColorByMagnitudeIntensity(
-    value: Double,
-    min: Double, // Ahora será minValGlobal
-    max: Double, // Ahora será maxValGlobal
-    targetHue: Float = 0f
-): Int {
-    // Si min y max son iguales (y no debería ocurrir si updateGlobalMinMax lo maneja)
-    if (max == min) {
-        // Devuelve un color base con intensidad media-baja si hay valor, o negro.
-        // La idea es que si todos los valores en el buffer son iguales (y no cero), se muestren.
-        val baseIntensity = if (value > 0.0) 0.1f else 0.0f
-        return ColorUtils.HSLToColor(floatArrayOf(targetHue, 0.95f, baseIntensity))
-    }
-
-    val normalizedMagnitude = ((value - min) / (max - min)).coerceIn(0.0, 1.0).toFloat()
-    val saturation = 0.95f
-    val minBrightness = 0.05f
-    val maxBrightnessRange = 0.95f
-    val brightness = (minBrightness + normalizedMagnitude * maxBrightnessRange).coerceIn(minBrightness, 1.0f)
-
-    return ColorUtils.HSLToColor(floatArrayOf(targetHue, saturation, brightness))
-}
-
-
-
-fun getColorByMagnitudeIntensityWithHueShift(
-    value: Double,
-    min: Double,
-    max: Double
-): Int {
-    if (max == min) {
-        val baseIntensity = if (value > 0.0) 0.1f else 0.0f
-        val baseHue = 240f // Azul por defecto para este caso
-        return ColorUtils.HSLToColor(floatArrayOf(baseHue, 0.8f, baseIntensity))
-    }
-
-    val normalizedMagnitude = ((value - min) / (max - min)).coerceIn(0.0, 1.0).toFloat()
-
-    // --- Variación del Matiz (Hue) ---
-    // Define el matiz para la magnitud MÍNIMA (normalizedMagnitude = 0.0)
-    val hueAtMinMagnitude = 240f // Ejemplo: Azul
-
-    // Define el matiz para la magnitud MÁXIMA (normalizedMagnitude = 1.0)
-    // Este será tu "rojo" específico.
-    // Ejemplos:
-    // val hueAtMaxMagnitude = 350f // Un rojo carmesí / magenta-rojizo
-    val hueAtMaxMagnitude = 15f  // Un rojo anaranjado
-
-    // Interpolar linealmente el matiz entre hueAtMinMagnitude y hueAtMaxMagnitude
-    var hue: Float
-    if (hueAtMaxMagnitude >= hueAtMinMagnitude) {
-        // Caso simple: el matiz aumenta con la magnitud
-        hue = hueAtMinMagnitude + (hueAtMaxMagnitude - hueAtMinMagnitude) * normalizedMagnitude
-    } else {
-        // Caso donde el matiz "cruza" el punto 0/360 (ej. de azul 240 a rojo 15)
-        // Necesitamos interpolar por el camino más corto en el círculo cromático.
-        // O, si quieres que siempre vaya en una dirección (ej. siempre aumentando),
-        // puedes ajustar hueAtMaxMagnitude sumándole 360 si es menor que hueAtMinMagnitude
-        // para asegurar que la interpolación sea "hacia adelante".
-
-        // Opción 1: Camino más corto (puede cambiar de dirección)
-        // val diff = hueAtMaxMagnitude - hueAtMinMagnitude
-        // if (abs(diff) > 180) { // Si el camino directo es más largo que cruzar por 0/360
-        //     if (diff > 0) {
-        //         hue = hueAtMinMagnitude + (diff - 360) * normalizedMagnitude
-        //     } else {
-        //         hue = hueAtMinMagnitude + (diff + 360) * normalizedMagnitude
-        //     }
-        // } else {
-        //     hue = hueAtMinMagnitude + diff * normalizedMagnitude
-        // }
-        // hue = (hue + 360f) % 360f // Asegurar que esté en [0, 360)
-
-        // Opción 2: Siempre interpolar en la dirección que "aumenta" el matiz,
-        // cruzando por 0/360 si es necesario.
-        // Ej: de Azul (240) -> Violeta (270) -> Magenta (300) -> Rojo (0/360) -> Rojo Naranja (15)
-        // Queremos ir de 240 a (15 + 360) = 375 para que la interpolación sea lineal hacia arriba.
-        val targetMaxHue = if (hueAtMaxMagnitude < hueAtMinMagnitude) hueAtMaxMagnitude + 360f else hueAtMaxMagnitude
-        hue = hueAtMinMagnitude + (targetMaxHue - hueAtMinMagnitude) * normalizedMagnitude
-        hue %= 360f // Asegurar que el resultado final esté en el rango [0, 360)
-    }
-
-
-    // --- Saturación ---
-    val saturation = (0.6f + normalizedMagnitude * 0.4f).coerceIn(0.6f, 1.0f) // Ej: de 0.6 a 1.0
-
-    // --- Brillo/Valor ---
-    val minBrightness = 0.15f // Un poco más visible para los valores más bajos
-    val maxBrightnessRange = 0.85f // (1.0f - minBrightness)
-    val brightness = (minBrightness + (normalizedMagnitude * normalizedMagnitude) * maxBrightnessRange).coerceIn(minBrightness, 1.0f)
-
-    return ColorUtils.HSLToColor(floatArrayOf(hue, saturation, brightness))
-}
-
 fun getGrayByValueSimple(value: Double, min: Double, max: Double): Int {
     if (min == max) {
         return Color.rgb(0, 0, 0)
@@ -943,135 +862,40 @@ fun getGrayByValueSimple(value: Double, min: Double, max: Double): Int {
     return Color.rgb(gray, gray, gray)
 }
 
+fun getSmoothedValue(x: Int, y: Int, values: Array<DoubleArray>): Double {
+    val x0 = x.coerceAtMost(values.size - 2)
+    val y0 = y.coerceAtMost(values[0].size - 2)
 
-fun getColorForSpectrogram(
-    value: Double,
-    minVal: Double, // Renombrado para claridad
-    maxVal: Double  // Renombrado para claridad
-): Int {
-    if (maxVal == minVal) {
-        return if (value > 0.0) Color.rgb(20, 0, 0) else Color.BLACK // Un rojo muy oscuro o negro
-    }
+    // Interpolación bilineal
+    val tl = values[x0][y0]
+    val tr = values[x0 + 1][y0]
+    val bl = values[x0][y0 + 1]
+    val br = values[x0 + 1][y0 + 1]
 
-    val normalizedMagnitude = ((value - minVal) / (maxVal - minVal)).coerceIn(0.0, 1.0).toFloat()
+    val xRatio = x - x0
+    val yRatio = y - y0
 
-    // --- Definir umbrales para la transición de color ---
-    // Estos valores están en el rango [0, 1] de normalizedMagnitude. Ajusta según tus preferencias.
-    val thresholdBlackEnd = 0.05f   // Por debajo de esto, es prácticamente negro
-    val thresholdBlueStart = thresholdBlackEnd
-    val thresholdBlueEnd = 0.35f    // Rango para tonos azules
-    val thresholdGreenStart = thresholdBlueEnd
-    val thresholdGreenEnd = 0.70f   // Rango para tonos verdes
-    val thresholdRedStart = thresholdGreenEnd
-    // El rojo va desde thresholdRedEnd hasta 1.0
-
-    var hue: Float
-    var saturation: Float
-    var brightness: Float
-
-    when {
-        // Rango 1: Negro
-        normalizedMagnitude < thresholdBlackEnd -> {
-            hue = 0f // No importa mucho para el negro
-            saturation = 0f
-            brightness = 0f
-        }
-
-        // Rango 2: Transición a Azul
-        normalizedMagnitude < thresholdBlueEnd -> {
-            // Interpolar dentro de este segmento [thresholdBlueStart, thresholdBlueEnd]
-            val segmentNormalized = (normalizedMagnitude - thresholdBlueStart) / (thresholdBlueEnd - thresholdBlueStart)
-
-            hue = 240f // Azul
-            saturation = (0.7f + segmentNormalized * 0.3f).coerceIn(0.7f, 1.0f) // Aumenta la saturación
-            brightness = (segmentNormalized * 0.8f).coerceIn(0.0f, 0.8f) // Aumenta el brillo desde casi 0
-        }
-
-        // Rango 3: Transición a Verde
-        normalizedMagnitude < thresholdGreenEnd -> {
-            // Interpolar dentro de este segmento [thresholdGreenStart, thresholdGreenEnd]
-            val segmentNormalized = (normalizedMagnitude - thresholdGreenStart) / (thresholdGreenEnd - thresholdGreenStart)
-
-            // Interpolar matiz de Azul (240) a Verde (120)
-            val hueBlue = 240f
-            val hueGreen = 120f
-            hue = hueBlue + (hueGreen - hueBlue) * segmentNormalized
-
-            saturation = 1.0f // Saturación completa
-            brightness = (0.6f + segmentNormalized * 0.4f).coerceIn(0.6f, 1.0f) // Mantener brillo alto, aumentando ligeramente
-        }
-
-        // Rango 4: Transición a Rojo (y más intenso)
-        else -> { // normalizedMagnitude >= thresholdRedStart (que es thresholdGreenEnd)
-            // Interpolar dentro de este segmento [thresholdRedStart, 1.0]
-            val segmentNormalized = (normalizedMagnitude - thresholdRedStart) / (1.0f - thresholdRedStart)
-
-            // Interpolar matiz de Verde (120) a Rojo (0)
-            val hueGreen = 120f
-            val hueRed = 0f // o 360f si prefieres para la interpolación
-
-            // Si interpolamos de 120 (verde) a 0 (rojo), necesitamos que el matiz decrezca.
-            // Para asegurar que vaya en la dirección correcta (ej., verde -> amarillo -> naranja -> rojo),
-            // podemos tratar el rojo como 0.
-            // O, si interpolamos de 120 a 360(rojo), el matiz aumenta, lo que no queremos aquí.
-            // Mejor interpolar de 120 a 0.
-            hue = hueGreen + (hueRed - hueGreen) * segmentNormalized
-            if (hue < 0) hue += 360f // Asegurar que el matiz sea positivo
-
-            saturation = 1.0f
-            brightness = (0.7f + segmentNormalized * 0.3f).coerceIn(0.7f, 1.0f) // Brillo máximo para el rojo más intenso
-        }
-    }
-
-    return ColorUtils.HSLToColor(floatArrayOf(hue, saturation, brightness))
+    return (tl * (1 - xRatio) * (1 - yRatio) +
+            tr * xRatio * (1 - yRatio) +
+            bl * (1 - xRatio) * yRatio +
+            br * xRatio * yRatio)
 }
 
-fun getColorByValueHSV(value: Double, min: Double, max: Double): Int {
-    if (min == 0.0 && max == 0.0) {
-        return Color.rgb(0, 0, 0)
-    }
-    if (value < min) return Color.rgb(0,0,0)
-    if (value > max) return Color.rgb(255,255,255) // O un color de saturación máxima
+fun bilinearInterpolate(data: Array<DoubleArray>, x: Float, y: Float): Double {
+    val x1 = x.toInt().coerceIn(0, data.size - 1)
+    val y1 = y.toInt().coerceIn(0, data[0].size - 1)
+    val x2 = (x1 + 1).coerceAtMost(data.size - 1)
+    val y2 = (y1 + 1).coerceAtMost(data[0].size - 1)
 
-    val normalizedValue = if (max - min == 0.0) 0.5 else (value - min) / (max - min)
+    val xRatio = x - x1
+    val yRatio = y - y1
 
-    // Matiz (Hue): Recorre el espectro de colores (0-360 grados).
-    // Mapea normalizedValue (0-1) a un rango de matiz, por ejemplo, de rojo (0) a magenta/rojo (300-360)
-    // para evitar un salto brusco de rojo a rojo si usas 0-360 directamente.
-    // O puedes usar de 0 a 240 (rojo a azul) para un espectro tipo arcoíris sin pasar por magenta.
-    val hue = (normalizedValue * 240f).toFloat() // Ejemplo: Rojo (0) -> Amarillo (60) -> Verde (120) -> Cian (180) -> Azul (240)
-
-    // Saturación (Saturation): Qué tan vivo es el color (0=gris, 1=color puro).
-    // Para colores brillantes, mantenlo alto.
-    val saturation = 0.9f // Puedes hacerlo 1.0f para máxima saturación.
-
-    // Valor/Brillo (Value/Brightness): Qué tan claro u oscuro es el color (0=negro, 1=color brillante).
-    // Para colores brillantes, mantenlo alto.
-    val brightness = 1.0f
-
-    // Convertir de HSV a RGB
-    // Color.HSVToColor espera un array de 3 floats: {hue, saturation, value}
-    return ColorUtils.HSLToColor(floatArrayOf(hue, saturation, brightness)) // Nota: HSLToColor también funciona bien aquí.
-    // Para HSV puro sería Color.HSVToColor, pero
-    // HSLToColor es de androidx.core.graphics.ColorUtils y más común.
-    // Si usas Color.HSVToColor (android.graphics.Color),
-    // los parámetros son (alpha, hsvArray).
+    return (data[x1][y1] * (1 - xRatio) * (1 - yRatio) +
+            data[x2][y1] * xRatio * (1 - yRatio) +
+            data[x1][y2] * (1 - xRatio) * yRatio +
+            data[x2][y2] * xRatio * yRatio)
 }
 
-// Si prefieres usar android.graphics.Color.HSVToColor:
-fun getColorByValuePureHSV(value: Double, min: Double, max: Double): Int {
-    if (min == 0.0 && max == 0.0) {
-        return Color.rgb(0, 0, 0)
-    }
-    if (value < min) return Color.rgb(0,0,0)
-    if (value > max) return Color.rgb(255,255,255)
 
-    val normalizedValue = if (max - min == 0.0) 0.5 else (value - min) / (max - min)
 
-    val hue = (normalizedValue * 240f).toFloat()
-    val saturation = 0.9f
-    val brightness = 1.0f
 
-    // android.graphics.Color.HSVToColor
-    return Color.HSVToColor(floatArrayOf(hue, saturation, brightness))
-}

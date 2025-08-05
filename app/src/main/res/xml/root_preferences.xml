@@ -3,7 +3,7 @@
     <PreferenceCategory app:title="@string/messages_header">
 
         <ListPreference
-            app:defaultValue="cm/s"
+            app:defaultValue="kHz"
             app:entries="@array/units"
             app:entryValues="@array/units"
             app:key="units"
@@ -31,29 +31,10 @@
             app:title="@string/time"
             app:useSimpleSummaryProvider="true" />
         <CheckBoxPreference
-            app:defaultValue="true"
+            app:defaultValue="false"
             app:key="gray"
             app:title="@string/gray_scale" />
     </PreferenceCategory>
 
-    <PreferenceCategory app:title="@string/patient_header">
-
-        <EditTextPreference
-            app:title="@string/patient_name"
-            app:key="name"
-            />
-
-        <SwitchPreferenceCompat
-            app:key="sync"
-            app:title="@string/sync_title" />
-
-        <SwitchPreferenceCompat
-            app:dependency="sync"
-            app:key="attachment"
-            app:summaryOff="@string/attachment_summary_off"
-            app:summaryOn="@string/attachment_summary_on"
-            app:title="@string/attachment_title" />
-
-    </PreferenceCategory>
 
 </PreferenceScreen>

@@ -1,33 +1,15 @@
 <resources>
-    <string name="app_name">Doppler Ultrasound</string>
-    <string name="settings">Ajustes</string>
-    <string name="about">Acerca de..</string>
-    <string name="manual_usuario">Manual de Usuario</string>
-    <string name="records_path">Grabaciones</string>
-    <string name="images_path">Imágenes</string>
-    <string name="title_activity_settings">SettingsActivity</string>
+    <string name="app_name">Audio Spectrum</string>
+    <string name="settings">Settings</string>
 
     <!-- Preference Titles -->
     <string name="messages_header">General</string>
-    <string name="patient_header">Pacientes</string>
-
-    <!-- Messages Preferences -->
-    <string name="signature_title">Your signature</string>
-    <string name="units_title">Unidad de medida en que se muestra el espectrograma</string>
-    <string name="freq_sampling">Frecuencia de muestreo</string>
-    <string name="window">Tamaño de ventana FFT</string>
-    <string name="time">Tiempo a mostrar en segundos</string>
+    <string name="units_title">Unit in spectrogram</string>
+    <string name="freq_sampling">Sampling rate in Hz</string>
+    <string name="window">FFT window size</string>
+    <string name="time">Time to show in seconds</string>
     <!-- Sync Preferences -->
-    <string name="sync_title">Sync email periodically</string>
-    <string name="attachment_title">Download incoming attachments</string>
-    <string name="attachment_summary_on">Automatically download attachments for incoming emails
-    </string>
-    <string name="patient_name">Nombre del paciente</string>
-    <string name="attachment_summary_off">Only download attachments when manually requested</string>
-    <!-- Strings used for fragments for navigation -->
-    <string name="first_fragment_label">First Fragment</string>
-    <string name="second_fragment_label">Second Fragment</string>
-    <string name="next">Next</string>
-    <string name="previous">Previous</string>
-    <string name="gray_scale">Escala de grises</string>
+    <string name="umbral">Threshold:</string>
+    <string name="gray_scale">Gray scale</string>
+    <string name="fmean">Mean Frequency</string>
 </resources>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Audio Espectro</string>
+    <string name="settings">Ajustes</string>
+
+    <!-- Preference Titles -->
+    <string name="messages_header">General</string>
+    <string name="units_title">Unidad de medida en que se muestra el espectrograma</string>
+    <string name="freq_sampling">Frecuencia de muestreo</string>
+    <string name="window">Tamaño de ventana FFT</string>
+    <string name="time">Tiempo a mostrar en segundos</string>
+    <!-- Sync Preferences -->
+    <string name="umbral">Umbral:</string>
+    <string name="fmean">Frecuencia media</string>
+
+    <string name="gray_scale">Escala de grises</string>
+
+</resources>
