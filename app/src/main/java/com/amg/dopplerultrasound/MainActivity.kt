@@ -104,7 +104,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dBText: TextView
 
     private lateinit var unit:String
-    private var windowSize = 256//512
+    private var windowSize = 512
     private var samplesBetweenWindows = 0
     private val textWidth = 60
     private val c = 154000.0
