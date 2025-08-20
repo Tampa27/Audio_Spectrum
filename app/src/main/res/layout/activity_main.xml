@@ -5,49 +5,58 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:weightSum="1"
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:padding="5dp"
     android:id="@+id/main"
     android:background="@color/purple_200"
     tools:context=".MainActivity">
 
     <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
         android:layout_weight="0.17"
-        android:paddingTop="30dp"
+        android:paddingTop="20dp"
         android:paddingEnd="5dp"
         android:paddingStart="10dp"
-        android:orientation="vertical">
+        android:gravity="center"
+        android:orientation="horizontal">
 
-        <TextView
-            android:layout_width="match_parent"
+
+        <LinearLayout
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="12dp"
-            android:paddingTop="12dp"
-            android:text=""
             android:gravity="center"
-            android:id="@+id/dbText"
-            style="@style/ProfessionalTextView"
-            />
-        <SeekBar
-            android:id="@+id/umbralSeek"
-            android:layout_width="130dp"
-            android:layout_height="wrap_content"
-            android:min="0"
-            android:layout_marginTop="45dp"
-            android:layout_marginBottom="40dp"
-            android:rotation="90"
-            android:progress="20"
-            android:max="60"
-            android:progressDrawable="@drawable/seek_bar"
-            android:minHeight="14dp"
-            android:maxHeight="14dp"
-            android:paddingBottom="4dp"
-            />
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="30dp"
+                android:textSize="13dp"
+                android:paddingTop="15dp"
+                android:text="1234"
+                android:gravity="center"
+                android:id="@+id/dbText"
+                style="@style/ProfessionalTextView"
+                />
+            <SeekBar
+                android:id="@+id/umbralSeek"
+                android:layout_width="130dp"
+                android:layout_height="30dp"
+                android:min="0"
+                android:progress="20"
+                android:max="60"
+                android:progressDrawable="@drawable/seek_bar"
+                android:minHeight="14dp"
+                android:maxHeight="14dp"
+                android:paddingBottom="4dp"
+                />
+
+        </LinearLayout>
+
+
         <CheckBox
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
             android:id="@+id/checkEnvol"
             android:textSize="12sp"
             android:text="@string/fmean"
@@ -57,8 +66,8 @@
     </LinearLayout>
 
     <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
         android:orientation="vertical"
         android:weightSum="1"
         android:layout_weight="0.97">
@@ -66,10 +75,10 @@
         <ImageView
             android:id="@+id/imageView"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
+            android:layout_height="match_parent"
             android:backgroundTint="@color/black"
             android:scaleType="fitCenter"
-            android:layout_weight="0.97"
+
             />
 
     </LinearLayout>

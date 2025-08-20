@@ -12,4 +12,5 @@
     <string name="umbral">Threshold:</string>
     <string name="gray_scale">Gray scale</string>
     <string name="fmean">Mean Frequency</string>
+    <string name="msg">Touch the screen to start or stop processing</string>
 </resources>

@@ -44,6 +44,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
@@ -124,19 +125,37 @@ class MainActivity : AppCompatActivity() {
 
     private var yAnt = 0.0f
 
-
+    private var handler: Handler? = null
+    private val delayedTask = Runnable {
+        isRunning = true
+        recordAudioWithPermissions() }
 
     private lateinit var sharedPreferences: SharedPreferences
 
     val shapeType = "rect"  // "rect", "triangle", "wave"
+
+    private lateinit var permissionLauncher: ActivityResultLauncher<String>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
+        //requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+
+        permissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { isGranted ->
+            if (isGranted) {
+                // Permiso concedido
+                recordAudio()
+            } else {
+                // Permiso denegado
+                //showPermissionDeniedMessage()
+            }
+        }
+
         // Bloquear orientación horizontal
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -145,6 +164,7 @@ class MainActivity : AppCompatActivity() {
             view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
+
 
         WindowCompat.setDecorFitsSystemWindows(
             window,
@@ -197,15 +217,13 @@ class MainActivity : AppCompatActivity() {
 
         Toast.makeText(
             applicationContext,
-            "Toca la pantalla para comenzar o detener el procesamiento",
+            getString(R.string.msg),
             //"Click on screen to start/stop audio capture",
             Toast.LENGTH_LONG
         ).show()
 
-        Handler(Looper.getMainLooper()).postDelayed({
-            isRunning = true
-            recordAudioWithPermissions()
-        }, 1000)
+        handler = Handler(Looper.getMainLooper())
+        handler?.postDelayed(delayedTask, 1000)
     }
 
     private fun loadPreferences() {
@@ -423,17 +441,7 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted ) {
 
-                recordAudio()
-            } else {
-
-            }
-        }
-
-    @RequiresApi(Build.VERSION_CODES.M)
     fun recordAudioWithPermissions() {
 
         when {
@@ -443,15 +451,9 @@ class MainActivity : AppCompatActivity() {
                 recordAudio()
             }
 
-            shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO) -> {
-                Toast.makeText(
-                    applicationContext,
-                    "",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
 
-            else -> requestPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+
+            else -> permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
         }
     }
 

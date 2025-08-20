@@ -12,7 +12,6 @@ class SettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.settings_activity)
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
 
         if (savedInstanceState == null) {
             supportFragmentManager

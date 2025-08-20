@@ -14,5 +14,5 @@
     <string name="fmean">Frecuencia media</string>
 
     <string name="gray_scale">Escala de grises</string>
-
+    <string name="msg">Touch the screen to start or stop processing</string>
 </resources>
